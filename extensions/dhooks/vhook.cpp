@@ -56,6 +56,7 @@ using namespace sp;
 #ifdef KE_ARCH_X64
 using namespace SourceHook::Asm;
 
+#ifdef WIN32
 SourceHook::Asm::x64JitWriter* GenerateThunk(HookSetup* hook)
 {
 	auto masm = new x64JitWriter();
@@ -132,6 +133,28 @@ SourceHook::Asm::x64JitWriter* GenerateThunk(HookSetup* hook)
 	masm->SetRE();
 	return masm;
 }
+#else
+// linux64 thunker
+SourceHook::Asm::x64JitWriter* GenerateThunk(HookSetup* hook)
+{
+	auto masm = new x64JitWriter();
+	auto type = hook->returnType;
+
+	// Save our frame pointer.
+	// This also realigns the stack to 16 bytes.
+	masm->push(rbp);
+	masm->mov(rbp, rsp);
+
+	// Restore RSP and RBP
+	// (same as `mov rsp, rbp` + `pop rbp`)
+	masm->leave();
+
+	masm->retn();
+
+	masm->SetRE();
+	return masm;
+}
+#endif
 #elif !defined( WIN32 )
 void *GenerateThunk(HookSetup* hook)
 {
@@ -334,6 +357,7 @@ SourceHook::PassInfo::PassType GetParamTypePassType(HookParamType type)
 size_t GetStackArgsSize(DHooksCallback *dg)
 {
 	size_t res = GetParamsSize(dg);
+#if defined(WIN32) || !defined(KE_ARCH_X64) // linux64 shall not pass
 #ifdef  WIN32
 	if(dg->returnType == ReturnType_Vector)//Account for result vector ptr.
 #else
@@ -342,6 +366,7 @@ size_t GetStackArgsSize(DHooksCallback *dg)
 	{
 		res += OBJECT_OFFSET;
 	}
+#endif
 	return res;
 }
 
