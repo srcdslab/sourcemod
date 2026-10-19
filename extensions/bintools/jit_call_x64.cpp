@@ -685,31 +685,22 @@ inline int ClassifyObject(const PassInfo *info, ObjectClass *classes)
 	{
 		numWords = int((info->size + 7) / 8);
 
-		unsigned int j = 0;
+		// Each eightbyte gets the merged class of every field laid out in it (fields are
+		// naturally aligned, in declaration order). E.g. Vector { float x, y, z; } is
+		// SSE (x, y) + SSE (z), returned in xmm0 + xmm1.
 		for (int i = 0; i < numWords; i++)
-		{
 			classes[i] = ObjectClass::None;
-			size_t sizeSoFar = 0;
-			for (int k = 0; j < numFields; j++, k++)
-			{
-				size_t sz = TypeSize(fields[j]);
-				if (sizeSoFar + sz > 8)
-					break;
-				else
-					sizeSoFar += sz;
 
-				if (k == 0 && sizeSoFar == 8) {
-					classes[i] = ClassifyType(fields[j++]);
-					break;
-				} else if (j + 1 >= numFields) {
-					break;
-				}
-
-				const ObjectField &field1 = fields[j];
-				const ObjectField &field2 = fields[j + 1];
-				
-				classes[i] = MergeClasses(ClassifyType(field1), ClassifyType(field2));
-			}
+		size_t fieldOffset = 0;
+		for (unsigned int j = 0; j < numFields; j++)
+		{
+			size_t sz = TypeSize(fields[j]);
+			fieldOffset = (fieldOffset + sz - 1) & ~(sz - 1);
+			size_t word = fieldOffset / 8;
+			if (word >= (size_t)numWords)
+				break;
+			classes[word] = MergeClasses(classes[word], ClassifyType(fields[j]));
+			fieldOffset += sz;
 		}
 	}
 		
