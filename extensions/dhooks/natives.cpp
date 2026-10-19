@@ -1515,8 +1515,9 @@ cell_t Native_GetParamAddress(IPluginContext *pContext, const cell_t *params)
 			return pContext->ThrowNativeErrorEx(err, "Could not read argument");
 		}
 		*reinterpret_cast<int64_t*>(sp_addr) = reinterpret_cast<uintptr_t>(return_ptr);
+		return 0;
 	}
-	return reinterpret_cast<uintptr_t>(return_ptr);
+	return PtrToLegacyAddress(return_ptr);
 }
 
 sp_nativeinfo_t g_Natives[] = 
