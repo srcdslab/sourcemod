@@ -174,7 +174,7 @@ cell_t Native_CreateHook(IPluginContext *pContext, const cell_t *params)
 //native Handle:DHookCreateDetour(Address:funcaddr, CallingConvention:callConv, ReturnType:returntype, ThisPointerType:thistype);
 cell_t Native_CreateDetour(IPluginContext *pContext, const cell_t *params)
 {
-	void *addr = reinterpret_cast<void*>(params[1]);
+	void *addr = LegacyAddressToPtr(params[1]);
 	if (pContext->GetRuntime()->FindPubvarByName("__Int64_Address__", nullptr) == SP_ERROR_NONE) {
 		cell_t* sp_addr;
 		if (int err = pContext->LocalToPhysAddr(params[1], &sp_addr); err != SP_ERROR_NONE) {
@@ -652,7 +652,7 @@ cell_t HookRawImpl(IPluginContext *pContext, const cell_t *params, int callbackI
 	if (removalcbIndex > 0)
 		removalcb = pContext->GetFunctionById(params[removalcbIndex]);
 
-	void *iface = reinterpret_cast<void*>(params[3]);
+	void *iface = LegacyAddressToPtr(params[3]);
 	if (pContext->GetRuntime()->FindPubvarByName("__Int64_Address__", nullptr) == SP_ERROR_NONE) {
 		cell_t* sp_addr;
 		if (int err = pContext->LocalToPhysAddr(params[3], &sp_addr); err != SP_ERROR_NONE) {
