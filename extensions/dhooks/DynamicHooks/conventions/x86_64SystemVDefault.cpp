@@ -28,6 +28,7 @@
 // >> INCLUDES
 // ============================================================================
 #include "x86_64SystemVDefault.h"
+#include <algorithm>
 #include <smsdk_ext.h>
 
 // ============================================================================
@@ -163,6 +164,19 @@ std::vector<Register_t> x86_64SystemVDefault::GetRegisters()
 			continue;
 		}
 		registers.push_back(m_vecArgTypes[i].custom_register);
+	}
+
+	// Always carry every argument register through the hook, declared or not. A member
+	// function declared without its `this` (fine on x86, where it stays on the stack) or
+	// any undeclared argument would otherwise reach the original function clobbered by
+	// the callbacks.
+	const Register_t argRegisters[] = { RDI, RSI, RDX, RCX, R8, R9, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7 };
+	for (Register_t reg : argRegisters)
+	{
+		if (std::find(registers.begin(), registers.end(), reg) == registers.end())
+		{
+			registers.push_back(reg);
+		}
 	}
 
 	return registers;
