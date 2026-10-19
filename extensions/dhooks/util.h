@@ -74,24 +74,17 @@ enum PluginRegister
 	DHookRegister_ST0
 };
 
-// Plugins built before `Address` became int64 pass 32-bit addresses, which on
-// x86_64 are SourceMod pseudo-addresses rather than raw pointers.
+// Plugins built before `Address` became int64 pass 32-bit addresses. Like the core
+// natives (LoadFromAddress, ...), convert them as-is: lossless on x86, but on x86_64
+// such plugins can't hold a pointer and must be rebuilt with SourceMod 1.13+.
 inline cell_t PtrToLegacyAddress(void *ptr)
 {
-#ifdef KE_ARCH_X64
-	return smutils->ToPseudoAddress(ptr);
-#else
-	return reinterpret_cast<cell_t>(ptr);
-#endif
+	return static_cast<cell_t>(reinterpret_cast<intptr_t>(ptr));
 }
 
 inline void *LegacyAddressToPtr(cell_t addr)
 {
-#ifdef KE_ARCH_X64
-	return smutils->FromPseudoAddress(addr);
-#else
-	return reinterpret_cast<void *>(addr);
-#endif
+	return reinterpret_cast<void *>(static_cast<intptr_t>(addr));
 }
 
 size_t GetParamOffset(HookParamsStruct *params, unsigned int index);
