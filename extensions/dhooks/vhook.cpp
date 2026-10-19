@@ -145,6 +145,51 @@ SourceHook::Asm::x64JitWriter* GenerateThunk(HookSetup* hook)
 	masm->push(rbp);
 	masm->mov(rbp, rsp);
 
+	// SourceHook calls us as ISHDelegate::Call(this, params...): rdi is the delegate,
+	// integer params follow in rsi, rdx, rcx, r8, r9, floats in xmm0-xmm7, the rest on the stack.
+	// Spill everything into 8-byte slots, which is the layout Callback() expects for its arg stack.
+	static x86_64_Reg arg_reg[] = { rsi, rdx, rcx, r8, r9 };
+	static x86_64_FloatReg arg_reg_float[] = { xmm0, xmm1, xmm2, xmm3, xmm4, xmm5, xmm6, xmm7 };
+
+	int32_t fakeStackSize = ke::Align((int32_t)hook->params.size() * 8, 16);
+	if (fakeStackSize > 0)
+		masm->sub(rsp, fakeStackSize);
+
+	int reg_index = 0;
+	int float_index = 0;
+	int stack_index = 0;
+	for (size_t i = 0; i < hook->params.size(); i++)
+	{
+		auto slot = rsp((int32_t)i * 8);
+		bool isFloat = hook->params[i].type == HookParamType_Float && hook->params[i].flags == PASSFLAG_BYVAL;
+		if (isFloat && float_index < 8)
+		{
+			masm->movsd(slot, arg_reg_float[float_index++]);
+		}
+		else if (!isFloat && reg_index < 5)
+		{
+			masm->mov(slot, arg_reg[reg_index++]);
+		}
+		else
+		{
+			// return address + saved rbp sit between rbp and the caller's stack arguments
+			masm->mov(rax, rbp(16 + 8 * stack_index++));
+			masm->mov(slot, rax);
+		}
+	}
+
+	// Callback(dg, argStack): rdi still holds the delegate.
+	masm->mov(rsi, rsp);
+	if (type == ReturnType_Float)
+	{
+		masm->mov(rax, (uintptr_t)Callback_float);
+	}
+	else
+	{
+		masm->mov(rax, (uintptr_t)Callback);
+	}
+	masm->call(rax);
+
 	// Restore RSP and RBP
 	// (same as `mov rsp, rbp` + `pop rbp`)
 	masm->leave();
