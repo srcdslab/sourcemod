@@ -15,6 +15,12 @@
 // Every check logs a "DHX:" line; compare the values with the ones the test passes.
 DynamicHook g_hTeleport;
 DynamicHook g_hOnTakeDamage;
+DynamicHook g_hAcceptInput;
+DynamicHook g_hShootPosition;
+DynamicHook g_hMaxSpeed;
+Handle g_hCallShootPosition;
+Handle g_hCallMaxSpeed;
+int g_iVariantFieldType;
 DynamicDetour g_dRoundRespawn;
 DynamicDetour g_dSwitchTeam;
 DynamicDetour g_dTerminateRound;
@@ -33,6 +39,29 @@ public void OnPluginStart()
 
 	g_hOnTakeDamage = new DynamicHook(gd.GetOffset("OnTakeDamage"), HookType_Entity, ReturnType_Int, ThisPointer_CBaseEntity);
 	g_hOnTakeDamage.AddParam(HookParamType_ObjectPtr);
+
+	// variant_t is passed by hidden reference (CHandle has a copy constructor), hence ODTOR.
+	g_hAcceptInput = new DynamicHook(gd.GetOffset("AcceptInput"), HookType_Entity, ReturnType_Bool, ThisPointer_CBaseEntity);
+	g_hAcceptInput.AddParam(HookParamType_CharPtr);
+	g_hAcceptInput.AddParam(HookParamType_CBaseEntity);
+	g_hAcceptInput.AddParam(HookParamType_CBaseEntity);
+	g_hAcceptInput.AddParam(HookParamType_Object, 20, DHookPass_ByVal|DHookPass_ODTOR|DHookPass_OCTOR|DHookPass_OASSIGNOP);
+	g_hAcceptInput.AddParam(HookParamType_Int);
+
+	g_iVariantFieldType = gd.GetOffset("variant_t::fieldType");
+
+	g_hShootPosition = new DynamicHook(gd.GetOffset("Weapon_ShootPosition"), HookType_Entity, ReturnType_Vector, ThisPointer_CBaseEntity);
+	g_hMaxSpeed = new DynamicHook(gd.GetOffset("GetPlayerMaxSpeed"), HookType_Entity, ReturnType_Float, ThisPointer_CBaseEntity);
+
+	StartPrepSDKCall(SDKCall_Player);
+	PrepSDKCall_SetFromConf(gd, SDKConf_Virtual, "Weapon_ShootPosition");
+	PrepSDKCall_SetReturnInfo(SDKType_Vector, SDKPass_ByValue);
+	g_hCallShootPosition = EndPrepSDKCall();
+
+	StartPrepSDKCall(SDKCall_Player);
+	PrepSDKCall_SetFromConf(gd, SDKConf_Virtual, "GetPlayerMaxSpeed");
+	PrepSDKCall_SetReturnInfo(SDKType_Float, SDKPass_Plain);
+	g_hCallMaxSpeed = EndPrepSDKCall();
 
 	g_dRoundRespawn = new DynamicDetour(Address_Null, CallConv_THISCALL, ReturnType_Void, ThisPointer_CBaseEntity);
 	CheckDetour(g_dRoundRespawn.SetFromConf(gd, SDKConf_Signature, "RoundRespawn"), "RoundRespawn");
@@ -132,6 +161,25 @@ public Action Command_Test(int iArgs)
 	RemoveEntity(iHurt);
 	LogMessage("DHX: health %d -> %d (pre-hook halves 20 damage: expect -10)", iHealth, GetClientHealth(iBot));
 
+	float fEye[3], fShoot[3];
+	GetClientEyePosition(iBot, fEye);
+	SDKCall(g_hCallShootPosition, iBot, fShoot);
+	LogMessage("DHX: Weapon_ShootPosition (no hook) = %.2f %.2f %.2f", fShoot[0], fShoot[1], fShoot[2]);
+	g_hShootPosition.HookEntity(Hook_Post, iBot, Hook_ShootPositionPost);
+	SDKCall(g_hCallShootPosition, iBot, fShoot);
+	LogMessage("DHX: Weapon_ShootPosition (post hook, unchanged) = %.2f %.2f %.2f, eye = %.2f %.2f %.2f", fShoot[0], fShoot[1], fShoot[2], fEye[0], fEye[1], fEye[2]);
+	g_hShootPosition.HookEntity(Hook_Pre, iBot, Hook_ShootPositionPre);
+	SDKCall(g_hCallShootPosition, iBot, fShoot);
+	LogMessage("DHX: Weapon_ShootPosition (pre hook supercede) = %.2f %.2f %.2f (expect 1.50 -2.25 3.00)", fShoot[0], fShoot[1], fShoot[2]);
+
+	float fSpeed = SDKCall(g_hCallMaxSpeed, iBot);
+	g_hMaxSpeed.HookEntity(Hook_Pre, iBot, Hook_MaxSpeedPre);
+	LogMessage("DHX: GetPlayerMaxSpeed %.2f -> %.2f (expect 123.50)", fSpeed, view_as<float>(SDKCall(g_hCallMaxSpeed, iBot)));
+
+	g_hAcceptInput.HookEntity(Hook_Pre, iBot, Hook_AcceptInput);
+	SetVariantString("255 0 0");
+	AcceptEntityInput(iBot, "Color", iBot, iBot);
+
 	int iTeam = GetClientTeam(iBot);
 	CS_SwitchTeam(iBot, iTeam == CS_TEAM_T ? CS_TEAM_CT : CS_TEAM_T);
 	CS_RespawnPlayer(iBot);
@@ -200,4 +248,36 @@ MRESReturn Detour_SetHibernating(Address pServer, DHookParam hParams)
 	}
 	hParams.Set(1, false);
 	return MRES_ChangedHandled;
+}
+
+MRESReturn Hook_ShootPositionPost(int iEntity, DHookReturn hReturn)
+{
+	float fVec[3];
+	hReturn.GetVector(fVec);
+	LogMessage("DHX: [vhook] Weapon_ShootPosition post ent=%d return=%.2f %.2f %.2f", iEntity, fVec[0], fVec[1], fVec[2]);
+	return MRES_Ignored;
+}
+
+MRESReturn Hook_ShootPositionPre(int iEntity, DHookReturn hReturn)
+{
+	float fVec[3] = {1.5, -2.25, 3.0};
+	hReturn.SetVector(fVec);
+	return MRES_Supercede;
+}
+
+MRESReturn Hook_MaxSpeedPre(int iEntity, DHookReturn hReturn)
+{
+	hReturn.Value = 123.5;
+	return MRES_Supercede;
+}
+
+MRESReturn Hook_AcceptInput(int iEntity, DHookReturn hReturn, DHookParam hParams)
+{
+	char sInput[32], sValue[32];
+	hParams.GetString(1, sInput, sizeof(sInput));
+	int iActivator = hParams.IsNull(2) ? -1 : hParams.Get(2);
+	int iType = hParams.GetObjectVar(4, g_iVariantFieldType, ObjectValueType_Int);
+	hParams.GetObjectVarString(4, 0, ObjectValueType_String, sValue, sizeof(sValue));
+	LogMessage("DHX: [vhook] AcceptInput ent=%d input=%s activator=%d variant type=%d value=\"%s\" outputid=%d", iEntity, sInput, iActivator, iType, sValue, hParams.Get(5));
+	return MRES_Ignored;
 }

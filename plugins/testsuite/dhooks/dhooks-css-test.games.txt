@@ -14,6 +14,27 @@
 				"linux"		"65"
 				"linux64"	"65"
 			}
+			"AcceptInput"
+			{
+				"linux"		"39"
+				"linux64"	"39"
+			}
+			// After the value union (12 bytes on x86, 16 on x86_64 where string_t is a pointer) and the EHANDLE.
+			"variant_t::fieldType"
+			{
+				"linux"		"16"
+				"linux64"	"20"
+			}
+			"Weapon_ShootPosition"
+			{
+				"linux"		"273"
+				"linux64"	"273"
+			}
+			"GetPlayerMaxSpeed"
+			{
+				"linux"		"447"
+				"linux64"	"447"
+			}
 		}
 		"Signatures"
 		{
@@ -32,6 +53,7 @@
 			"SetHibernating"
 			{
 				"library"	"engine"
+				"linux"		"@_ZN11CGameServer14SetHibernatingEb"
 				"linux64"	"@_ZN11CGameServer14SetHibernatingEb"
 			}
 			"TerminateRound"
