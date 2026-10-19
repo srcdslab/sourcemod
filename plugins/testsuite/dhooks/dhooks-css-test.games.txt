@@ -1,0 +1,45 @@
+"Games"
+{
+	"cstrike"
+	{
+		"Offsets"
+		{
+			"Teleport"
+			{
+				"linux"		"112"
+				"linux64"	"112"
+			}
+			"OnTakeDamage"
+			{
+				"linux"		"65"
+				"linux64"	"65"
+			}
+		}
+		"Signatures"
+		{
+			"RoundRespawn"
+			{
+				"library"	"server"
+				"linux"		"@_ZN9CCSPlayer12RoundRespawnEv"
+				"linux64"	"@_ZN9CCSPlayer12RoundRespawnEv"
+			}
+			"SwitchTeam"
+			{
+				"library"	"server"
+				"linux"		"@_ZN9CCSPlayer10SwitchTeamEi"
+				"linux64"	"@_ZN9CCSPlayer10SwitchTeamEi"
+			}
+			"SetHibernating"
+			{
+				"library"	"engine"
+				"linux64"	"@_ZN11CGameServer14SetHibernatingEb"
+			}
+			"TerminateRound"
+			{
+				"library"	"server"
+				"linux"		"@_ZN12CCSGameRules14TerminateRoundEfi"
+				"linux64"	"@_ZN12CCSGameRules14TerminateRoundEfi"
+			}
+		}
+	}
+}
