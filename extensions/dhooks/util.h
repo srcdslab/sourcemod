@@ -74,6 +74,19 @@ enum PluginRegister
 	DHookRegister_ST0
 };
 
+// Plugins built before `Address` became int64 pass 32-bit addresses. Like the core
+// natives (LoadFromAddress, ...), convert them as-is: lossless on x86, but on x86_64
+// such plugins can't hold a pointer and must be rebuilt with SourceMod 1.13+.
+inline cell_t PtrToLegacyAddress(void *ptr)
+{
+	return static_cast<cell_t>(reinterpret_cast<intptr_t>(ptr));
+}
+
+inline void *LegacyAddressToPtr(cell_t addr)
+{
+	return reinterpret_cast<void *>(static_cast<intptr_t>(addr));
+}
+
 size_t GetParamOffset(HookParamsStruct *params, unsigned int index);
 void * GetObjectAddr(HookParamType type, unsigned int flags, void **params, size_t offset);
 size_t GetParamTypeSize(HookParamType type);

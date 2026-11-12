@@ -132,12 +132,6 @@ struct ParamInfo
 	Register_t custom_register;
 };
 
-#ifdef  WIN32
-#define OBJECT_OFFSET sizeof(void *)
-#else
-#define OBJECT_OFFSET (sizeof(void *)*2)
-#endif
-
 class HookReturnStruct
 {
 public:
