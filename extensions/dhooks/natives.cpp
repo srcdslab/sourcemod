@@ -174,7 +174,7 @@ cell_t Native_CreateHook(IPluginContext *pContext, const cell_t *params)
 //native Handle:DHookCreateDetour(Address:funcaddr, CallingConvention:callConv, ReturnType:returntype, ThisPointerType:thistype);
 cell_t Native_CreateDetour(IPluginContext *pContext, const cell_t *params)
 {
-	void *addr = reinterpret_cast<void*>(params[1]);
+	void *addr = LegacyAddressToPtr(params[1]);
 	if (pContext->GetRuntime()->FindPubvarByName("__Int64_Address__", nullptr) == SP_ERROR_NONE) {
 		cell_t* sp_addr;
 		if (int err = pContext->LocalToPhysAddr(params[1], &sp_addr); err != SP_ERROR_NONE) {
@@ -353,6 +353,7 @@ cell_t Native_AddParam(IPluginContext *pContext, const cell_t *params)
 		info.flags = PASSFLAG_BYVAL;
 	}
 
+	// TODO: why?
 	// DynamicDetours doesn't expose the passflags concept like SourceHook.
 	// See if we're trying to set some invalid flags on detour arguments.
 	if(setup->hookMethod == Detour && (info.flags & ~PASSFLAG_BYVAL) > 0)
@@ -651,7 +652,7 @@ cell_t HookRawImpl(IPluginContext *pContext, const cell_t *params, int callbackI
 	if (removalcbIndex > 0)
 		removalcb = pContext->GetFunctionById(params[removalcbIndex]);
 
-	void *iface = reinterpret_cast<void*>(params[3]);
+	void *iface = LegacyAddressToPtr(params[3]);
 	if (pContext->GetRuntime()->FindPubvarByName("__Int64_Address__", nullptr) == SP_ERROR_NONE) {
 		cell_t* sp_addr;
 		if (int err = pContext->LocalToPhysAddr(params[3], &sp_addr); err != SP_ERROR_NONE) {
@@ -1514,8 +1515,9 @@ cell_t Native_GetParamAddress(IPluginContext *pContext, const cell_t *params)
 			return pContext->ThrowNativeErrorEx(err, "Could not read argument");
 		}
 		*reinterpret_cast<int64_t*>(sp_addr) = reinterpret_cast<uintptr_t>(return_ptr);
+		return 0;
 	}
-	return reinterpret_cast<uintptr_t>(return_ptr);
+	return PtrToLegacyAddress(return_ptr);
 }
 
 sp_nativeinfo_t g_Natives[] = 

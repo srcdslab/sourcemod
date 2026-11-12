@@ -56,6 +56,7 @@ using namespace sp;
 #ifdef KE_ARCH_X64
 using namespace SourceHook::Asm;
 
+#ifdef WIN32
 SourceHook::Asm::x64JitWriter* GenerateThunk(HookSetup* hook)
 {
 	auto masm = new x64JitWriter();
@@ -132,6 +133,147 @@ SourceHook::Asm::x64JitWriter* GenerateThunk(HookSetup* hook)
 	masm->SetRE();
 	return masm;
 }
+#else
+// linux64 thunker
+SourceHook::Asm::x64JitWriter* GenerateThunk(HookSetup* hook)
+{
+	auto masm = new x64JitWriter();
+	auto type = hook->returnType;
+
+	// Save our frame pointer.
+	// This also realigns the stack to 16 bytes.
+	masm->push(rbp);
+	masm->mov(rbp, rsp);
+
+	// SourceHook calls us as ISHDelegate::Call(this, params...): rdi is the delegate,
+	// integer params follow in rsi, rdx, rcx, r8, r9, floats in xmm0-xmm7, the rest on the stack.
+	// Rebuild the arg stack Callback() expects, at the offsets GetStackParamOffset() computes:
+	// 8 bytes per param, objects passed by value take their own size.
+	static x86_64_Reg arg_reg[] = { rsi, rdx, rcx, r8, r9 };
+	static x86_64_FloatReg arg_reg_float[] = { xmm0, xmm1, xmm2, xmm3, xmm4, xmm5, xmm6, xmm7 };
+
+	// Vector/string_t callbacks take a result pointer in argStack[0] and read params after OBJECT_OFFSET.
+	bool resultInStack = (type == ReturnType_Vector || type == ReturnType_String);
+	int32_t argsOffset = resultInStack ? OBJECT_OFFSET : 0;
+	int32_t argsSize = 0;
+	for (size_t i = 0; i < hook->params.size(); i++)
+	{
+		bool byRefObject = hook->params[i].type == HookParamType_Object && (hook->params[i].flags & PASSFLAG_ODTOR);
+		argsSize += byRefObject ? sizeof(void *) : hook->params[i].size;
+	}
+	// + 8 bytes of slack: by-value objects are copied 8 bytes at a time
+	int32_t resultOffset = argsOffset + argsSize + 8;
+	int32_t fakeStackSize = ke::Align(resultOffset + (resultInStack ? (int32_t)sizeof(SDKVector) + 4 : 0), 16);
+	masm->sub(rsp, fakeStackSize);
+
+	if (resultInStack)
+	{
+		masm->lea(rax, rsp(resultOffset));
+		masm->mov(rsp(0), rax);
+	}
+
+	int reg_index = 0;
+	int float_index = 0;
+	int32_t callerStack = 16; // return address + saved rbp
+	int32_t offset = argsOffset;
+	for (size_t i = 0; i < hook->params.size(); i++)
+	{
+		const ParamInfo &param = hook->params[i];
+		bool byRefObject = param.type == HookParamType_Object && (param.flags & PASSFLAG_ODTOR);
+		if (param.type == HookParamType_Float && param.flags == PASSFLAG_BYVAL)
+		{
+			if (float_index < 8)
+			{
+				masm->movsd(rsp(offset), arg_reg_float[float_index++]);
+			}
+			else
+			{
+				masm->mov(rax, rbp(callerStack));
+				masm->mov(rsp(offset), rax);
+				callerStack += 8;
+			}
+			offset += param.size;
+		}
+		else if (param.type == HookParamType_Object && !byRefObject)
+		{
+			// Trivially copyable objects: System V passes those over 16 bytes inline on the stack.
+			// Smaller ones are split over registers by field class, which we can't know: assume integer fields.
+			int32_t qwords = ke::Align((int32_t)param.size, 8) / 8;
+			for (int32_t q = 0; q < qwords; q++)
+			{
+				if (param.size > 16 || reg_index + qwords > 5)
+				{
+					masm->mov(rax, rbp(callerStack + q * 8));
+					masm->mov(rsp(offset + q * 8), rax);
+				}
+				else
+				{
+					masm->mov(rsp(offset + q * 8), arg_reg[reg_index + q]);
+				}
+			}
+			if (param.size > 16 || reg_index + qwords > 5)
+				callerStack += qwords * 8;
+			else
+				reg_index += qwords;
+			offset += param.size;
+		}
+		else
+		{
+			if (reg_index < 5)
+			{
+				masm->mov(rsp(offset), arg_reg[reg_index++]);
+			}
+			else
+			{
+				masm->mov(rax, rbp(callerStack));
+				masm->mov(rsp(offset), rax);
+				callerStack += 8;
+			}
+			offset += byRefObject ? sizeof(void *) : param.size;
+		}
+	}
+
+	// Callback(dg, argStack): rdi still holds the delegate.
+	masm->mov(rsi, rsp);
+	if (type == ReturnType_Float)
+	{
+		masm->mov(rax, (uintptr_t)Callback_float);
+	}
+	else if (type == ReturnType_Vector)
+	{
+		masm->mov(rax, (uintptr_t)Callback_vector);
+	}
+	else if (type == ReturnType_String)
+	{
+		masm->mov(rax, (uintptr_t)Callback_stringt);
+	}
+	else
+	{
+		masm->mov(rax, (uintptr_t)Callback);
+	}
+	masm->call(rax);
+
+	if (type == ReturnType_Vector)
+	{
+		// Vector is returned by value in xmm0 (x, y) and xmm1 (z).
+		masm->movsd(xmm0, rax());
+		masm->movsd(xmm1, rax(8));
+	}
+	else if (type == ReturnType_String)
+	{
+		masm->mov(rax, rax());
+	}
+
+	// Restore RSP and RBP
+	// (same as `mov rsp, rbp` + `pop rbp`)
+	masm->leave();
+
+	masm->retn();
+
+	masm->SetRE();
+	return masm;
+}
+#endif
 #elif !defined( WIN32 )
 void *GenerateThunk(HookSetup* hook)
 {
@@ -514,7 +656,7 @@ void *Callback(DHooksCallback *dg, void **argStack)
 				std::int64_t addr = reinterpret_cast<std::int64_t>(thisAddr);
 				dg->plugin_callback->PushArray(reinterpret_cast<cell_t*>(&addr), 2);
 			} else {
-				dg->plugin_callback->PushCell((cell_t)thisAddr);
+				dg->plugin_callback->PushCell(PtrToLegacyAddress(thisAddr));
 			}
 		}
 	}
@@ -712,7 +854,7 @@ float Callback_float(DHooksCallback *dg, void **argStack)
 				std::int64_t addr = reinterpret_cast<std::int64_t>(thisAddr);
 				dg->plugin_callback->PushArray(reinterpret_cast<cell_t*>(&addr), 2);
 			} else {
-				dg->plugin_callback->PushCell((cell_t)thisAddr);
+				dg->plugin_callback->PushCell(PtrToLegacyAddress(thisAddr));
 			}
 		}
 	}
@@ -883,7 +1025,7 @@ SDKVector *Callback_vector(DHooksCallback *dg, void **argStack)
 				std::int64_t addr = reinterpret_cast<std::int64_t>(thisAddr);
 				dg->plugin_callback->PushArray(reinterpret_cast<cell_t*>(&addr), 2);
 			} else {
-				dg->plugin_callback->PushCell((cell_t)thisAddr);
+				dg->plugin_callback->PushCell(PtrToLegacyAddress(thisAddr));
 			}
 		}
 	}
@@ -1051,7 +1193,7 @@ string_t *Callback_stringt(DHooksCallback *dg, void **argStack)
 				std::int64_t addr = reinterpret_cast<std::int64_t>(thisAddr);
 				dg->plugin_callback->PushArray(reinterpret_cast<cell_t*>(&addr), 2);
 			} else {
-				dg->plugin_callback->PushCell((cell_t)thisAddr);
+				dg->plugin_callback->PushCell(PtrToLegacyAddress(thisAddr));
 			}
 		}
 	}
