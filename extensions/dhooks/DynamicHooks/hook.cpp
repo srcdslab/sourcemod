@@ -419,6 +419,17 @@ void CHook::CreatePostCallback()
 	// Restore the previously saved registers, so any changes will be applied
 	Write_RestoreRegisters(jit, HOOKTYPE_POST);
 
+	// The return value (rax, rdx, xmm0, xmm1) must reach the caller untouched: GetReturnAddress is a
+	// C call that overwrites them, and rax then held the return address, so every non-void detoured
+	// function returned it (a "true" bool) to its caller. Kept on the stack around the call (48 bytes:
+	// the key passed to GetReturnAddress, rsp as SetReturnAddress stored it, is now rsp + 48), and the
+	// jump back goes through r11 (caller-saved, never a return register).
+	jit.push(rax);
+	jit.push(rdx);
+	jit.sub(rsp, 32);
+	jit.movsd(rsp(), xmm0);
+	jit.movsd(rsp(16), xmm1);
+
 	// Get return address
 	union
 	{
@@ -437,8 +448,8 @@ void CHook::CreatePostCallback()
 	MSVC_ONLY(jit.mov(rcx, reinterpret_cast<std::uint64_t>(this)));
 
 	// 2nd parameter (rsp)
-	GCC_ONLY(jit.lea(rsi, rsp()));
-	MSVC_ONLY(jit.lea(rdx, rsp(40)));
+	GCC_ONLY(jit.lea(rsi, rsp(48)));
+	MSVC_ONLY(jit.lea(rdx, rsp(40 + 48)));
 
 	// Call GetReturnAddress
 	jit.mov(rax, func.address);
@@ -449,9 +460,15 @@ void CHook::CreatePostCallback()
 	// Free shadow space
 	MSVC_ONLY(jit.add(rsp, 40));
 
-	// Jump to the original return address
+	// Back the return value, then jump to the original return address
+	jit.mov(r11, rax);
+	jit.movsd(xmm0, rsp());
+	jit.movsd(xmm1, rsp(16));
+	jit.add(rsp, 32);
+	jit.pop(rdx);
+	jit.pop(rax);
 	jit.add(rsp, 8);
-	jit.jump(rax);
+	jit.jump(r11);
 }
 
 void CHook::Write_CallHandler(x64JitWriter& jit, HookType_t type)
