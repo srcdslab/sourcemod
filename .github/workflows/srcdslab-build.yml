@@ -1,0 +1,115 @@
+# srcdslab only (not in alliedmodders/sourcemod): build the patched 1.13-<rev> branches
+# (upstream SourceMod at <rev> plus our x86_64 DHooks/BinTools fixes) and publish them as a
+# GitHub release. build-release.yml only runs on master and X.Y-dev and needs secrets this
+# fork does not have (MAXMIND_LICENSE_KEY, breakpad symbol server), so it is left untouched
+# to keep upstream merges clean.
+name: srcdslab build
+
+on:
+  push:
+    branches:
+      - '1.13-[0-9]+'
+  pull_request:
+    branches:
+      - '1.13-[0-9]+'
+  workflow_dispatch:
+
+env:
+  ARCH: x86,x86_64
+  # NiDE only runs CS:S on Linux (checked on 2026-11-13), so only that SDK is built.
+  SDKS: css
+  MARIADB_CONNECTOR_C_VERSION: '3.4.9'
+  MARIADB_CONNECTOR_C_RELEASE: '3.4.9-sm.5'
+  # srcdslab MM:S 1.12-dev carries the Linux x86_64 SourceHook work (srcdslab/metamod-source#4)
+  # that the x86_64 DHooks needs (x64JitWriter::leave). checkout-deps.sh keeps an existing
+  # mmsource-1.12 folder and pulls from its own origin, so it stays on this repository.
+  MMSOURCE_REPO: https://github.com/srcdslab/metamod-source
+  MMSOURCE_BRANCH: 1.12-dev
+
+jobs:
+  build:
+    name: linux
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/alliedmodders/build-containers/debian11-clang22:latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout SourceMod
+        uses: actions/checkout@v7
+        with:
+          path: sourcemod
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/dependencies"
+          cd "$GITHUB_WORKSPACE/dependencies"
+          # Satisfy checkout-deps requirement for a "sourcemod" folder.
+          mkdir -p sourcemod
+          git clone --recursive -b "$MMSOURCE_BRANCH" "$MMSOURCE_REPO" mmsource-1.12
+          ../sourcemod/tools/checkout-deps.sh -s "$SDKS"
+
+      - name: Build
+        working-directory: sourcemod
+        shell: bash
+        run: |
+          set -euo pipefail
+          deps="$GITHUB_WORKSPACE/dependencies"
+          mkdir build
+          cd build
+          python3 ../configure.py \
+            --enable-optimize \
+            --sdks="$SDKS" \
+            --targets="$ARCH" \
+            --mms-path="$deps/mmsource-1.12" \
+            --hl2sdk-root="$deps" \
+            --mariadb-path="$deps/mariadb-connector-c-$MARIADB_CONNECTOR_C_VERSION-x86" \
+            --mariadb64-path="$deps/mariadb-connector-c-$MARIADB_CONNECTOR_C_VERSION-x86_64"
+          ambuild
+
+      - name: Package
+        id: package
+        working-directory: sourcemod/build/package
+        shell: bash
+        run: |
+          set -euo pipefail
+          version_base=$(cat ../../product.version)
+          version_base=${version_base%-dev}
+          version_rev=$(git rev-list --count HEAD)
+          version="${version_base}.${version_rev}"
+          filename="sourcemod-${version_base}-git${version_rev}-srcdslab-linux.tar.gz"
+          # Fail early if the x86_64 DHooks or BinTools did not build.
+          for ext in dhooks bintools; do
+            test -f "addons/sourcemod/extensions/x64/$ext.ext.so"
+          done
+          tar zcf "$filename" addons cfg
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "filename=$filename" >> "$GITHUB_OUTPUT"
+
+      - name: Upload package
+        uses: actions/upload-artifact@v7
+        with:
+          name: sourcemod-${{ steps.package.outputs.version }}-linux
+          path: sourcemod/build/package/${{ steps.package.outputs.filename }}
+
+      - name: Create release
+        if: github.event_name == 'push'
+        uses: ncipollo/release-action@v1.21.0
+        with:
+          allowUpdates: true
+          replacesArtifacts: true
+          artifacts: sourcemod/build/package/${{ steps.package.outputs.filename }}
+          artifactContentType: application/gzip
+          artifactErrorsFailBuild: true
+          tag: ${{ steps.package.outputs.version }}-srcdslab
+          name: SourceMod ${{ steps.package.outputs.version }} (srcdslab ${{ github.ref_name }})
+          body: |
+            SourceMod built from the srcdslab `${{ github.ref_name }}` branch: upstream SourceMod plus the srcdslab x86_64 DHooks and BinTools fixes, against srcdslab/metamod-source `${{ env.MMSOURCE_BRANCH }}`.
+            CS:S only, Linux x86 and x86_64. No GeoLite2 database is included.
+          commit: ${{ github.sha }}
+          makeLatest: true
+          token: ${{ secrets.GITHUB_TOKEN }}
